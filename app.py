@@ -191,7 +191,7 @@ def format_money(v):
     return f"{int(v):,}원"
 
 
-@st.dialog("입찰공고 상세", width="large", dismissible=False)
+@st.dialog("입찰공고 상세", width="large")
 def show_detail_dialog(row: pd.Series):
     now = datetime.now()
     bid_begin = row.get("bidBeginDt")
