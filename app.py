@@ -24,14 +24,21 @@ FIREBASE_CRED_PATH = Path(
     )
 )
 FIREBASE_COLLECTION = os.getenv("G2B_FIREBASE_COLLECTION", "bid_pblanc_list")
-FIREBASE_ENABLED = FIREBASE_CRED_PATH.exists()
+
+def _has_secrets() -> bool:
+    return FIREBASE_CRED_PATH.exists() or ("firebase" in st.secrets)
+
+FIREBASE_ENABLED = _has_secrets()
 
 
 def get_firestore_client():
     if not FIREBASE_ENABLED:
         raise FileNotFoundError("Firebase credential file not found.")
     if not firebase_admin._apps:
-        cred = credentials.Certificate(str(FIREBASE_CRED_PATH))
+        if FIREBASE_CRED_PATH.exists():
+            cred = credentials.Certificate(str(FIREBASE_CRED_PATH))
+        else:
+            cred = credentials.Certificate(dict(st.secrets["firebase"]))
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
@@ -114,16 +121,13 @@ def load_data() -> tuple[pd.DataFrame, str]:
             client = get_firestore_client()
             docs = client.collection(FIREBASE_COLLECTION).stream()
             records = [doc.to_dict() for doc in docs]
-        except Exception:
-            source = "sample"
-    else:
-        source = "sample"
+        except Exception as exc:
+            raise RuntimeError(f"Firebase에서 데이터를 불러오지 못했습니다: {exc}") from exc
 
-    if source == "sample" or not records:
-        df = pd.read_csv("sample_data.csv")
-        source = "sample"
-    else:
-        df = pd.DataFrame(records)
+    if not records:
+        raise RuntimeError("Firebase에서 불러온 데이터가 없습니다.")
+
+    df = pd.DataFrame(records)
 
     # 날짜 컬럼 파싱
     date_cols = [
