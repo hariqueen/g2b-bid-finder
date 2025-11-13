@@ -251,7 +251,11 @@ def show_detail_dialog(row: pd.Series):
 
 
 def main():
-    df, data_source = load_data()
+    try:
+        df, data_source = load_data()
+    except Exception as exc:
+        st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {exc}")
+        st.stop()
     flash_message = st.session_state.pop("refresh_message", None)
     if flash_message:
         level = flash_message.get("type", "info")
