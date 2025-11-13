@@ -111,39 +111,37 @@ def get_last_collection_date() -> date | None:
 @st.cache_data
 def load_data() -> tuple[pd.DataFrame, str]:
     """
-    Firestore에서 데이터를 조회하고, 실패 시 로컬 CSV를 반환합니다.
+    Firestore에서 데이터를 조회하고, 실패 시 빈 DataFrame을 반환합니다.
     """
+    records: list[dict] = []
     source = "firestore"
-    records = []
 
-    if FIREBASE_ENABLED:
-        try:
-            client = get_firestore_client()
-            docs = client.collection(FIREBASE_COLLECTION).stream()
-            records = [doc.to_dict() for doc in docs]
-        except Exception as exc:
-            raise RuntimeError(f"Firebase에서 데이터를 불러오지 못했습니다: {exc}") from exc
+    if not FIREBASE_ENABLED:
+        return pd.DataFrame(), "disabled"
+
+    try:
+        client = get_firestore_client()
+        docs = client.collection(FIREBASE_COLLECTION).stream()
+        records = [doc.to_dict() for doc in docs]
+    except Exception as exc:
+        return pd.DataFrame(), f"error: {exc}"
 
     if not records:
-        raise RuntimeError("Firebase에서 불러온 데이터가 없습니다.")
+        return pd.DataFrame(), "empty"
 
     df = pd.DataFrame(records)
 
-    # 날짜 컬럼 파싱
-    date_cols = [
-        "bidNtceDt", "bidBeginDt", "bidClseDt", "bidQlfctRgstDt"
-    ]
+    date_cols = ["bidNtceDt", "bidBeginDt", "bidClseDt", "bidQlfctRgstDt"]
     for c in date_cols:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], errors="coerce")
 
-    # 예가 숫자 컬럼
     for c in ["asignBdgtAmt", "presmptPrce"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # 상태 컬럼 (입찰 전 / 진행중 / 마감)
     now = datetime.now()
+
     def compute_status(row):
         begin = row.get("bidBeginDt")
         close = row.get("bidClseDt")
@@ -157,14 +155,14 @@ def load_data() -> tuple[pd.DataFrame, str]:
             return "마감"
         return "정보 부족"
 
-    df["status"] = df.apply(compute_status, axis=1)
+    if len(df) > 0:
+        df["status"] = df.apply(compute_status, axis=1)
+    else:
+        df["status"] = []
 
-    # 재공고 여부 보정 (Y/N 유지, 샘플 데이터 호환)
     if "reNtceYn" in df.columns:
         df["reNtceYn"] = (
-            df["reNtceYn"]
-            .fillna("")
-            .replace({"재공고": "Y", "최초공고": "N"})
+            df["reNtceYn"].fillna("").replace({"재공고": "Y", "최초공고": "N"})
         )
     else:
         df["reNtceYn"] = ""
@@ -251,11 +249,16 @@ def show_detail_dialog(row: pd.Series):
 
 
 def main():
-    try:
-        df, data_source = load_data()
-    except Exception as exc:
-        st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {exc}")
-        st.stop()
+    df, data_source = load_data()
+
+    if df.empty:
+        if not FIREBASE_ENABLED:
+            st.error("Firebase 설정을 찾을 수 없습니다. secrets 또는 JSON 경로를 확인해 주세요.")
+        elif data_source.startswith("error:"):
+            st.error(f"Firebase에서 데이터를 불러오는 중 오류가 발생했습니다:\n{data_source[7:]}")
+        else:
+            st.info("Firestore에 표시할 입찰공고 데이터가 없습니다.")
+        return
     flash_message = st.session_state.pop("refresh_message", None)
     if flash_message:
         level = flash_message.get("type", "info")
@@ -273,9 +276,7 @@ def main():
     with st.container():
         col_h1, col_h2 = st.columns([3, 1])
         with col_h1:
-            if data_source == "sample":
-                st.info("Firestore 데이터를 찾을 수 없어 샘플 CSV를 사용 중입니다.")
-            elif last_collection_date:
+            if last_collection_date:
                 st.caption(f"마지막 업데이트: {last_collection_date.isoformat()}")
             elif latest_bid_dt:
                 st.caption(f"마지막 업데이트: {latest_bid_dt.strftime('%Y-%m-%d')}")
