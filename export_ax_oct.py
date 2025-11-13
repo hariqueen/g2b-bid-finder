@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import unquote
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -48,6 +49,19 @@ FIREBASE_CRED_PATH = Path(
 FIREBASE_COLLECTION = "bid_pblanc_list"
 FIREBASE_META_COLLECTION = "meta"
 FIREBASE_META_DOC = "collection_state"
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def now_kst() -> datetime:
+    return datetime.now(tz=KST)
+
+
+def ensure_kst(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=KST)
+    return dt.astimezone(KST)
+
 
 KEYWORD = "AX"
 ROWS_PER_PAGE = 50  # 최대 999까지 지원
@@ -139,15 +153,18 @@ def calc_period(
     db: firestore.Client | None = None,
     verbose: bool = True,
 ) -> tuple[datetime, datetime]:
-    end_dt = datetime.now().replace(second=0, microsecond=0)
+    end_dt = now_kst().replace(second=0, microsecond=0)
     if default_start is None:
-        default_start = datetime(2025, 1, 1)
+        default_start = datetime(2025, 1, 1, tzinfo=KST)
+    else:
+        default_start = ensure_kst(default_start)
 
     start_dt = default_start
     try:
         client = db or init_firestore()
         latest_dt = get_latest_bid_datetime(client)
         if latest_dt:
+            latest_dt = ensure_kst(latest_dt)
             candidate = latest_dt + timedelta(seconds=1)
             if candidate <= end_dt:
                 start_dt = candidate
@@ -187,6 +204,7 @@ def upsert_firestore(
     db: firestore.Client | None = None,
     *,
     verbose: bool = True,
+    collected_at: datetime | None = None,
 ) -> int:
     if not records:
         if verbose:
@@ -196,11 +214,12 @@ def upsert_firestore(
     client = db or init_firestore()
     batch = client.batch()
     total = len(records)
-    collected_at = datetime.now().isoformat()
+    collected_at_dt = ensure_kst(collected_at) if collected_at else now_kst()
+    collected_at_iso = collected_at_dt.isoformat()
 
     for idx, record in enumerate(records, start=1):
         normalized = normalize_record(record)
-        normalized["collectedAt"] = collected_at
+        normalized["collectedAt"] = collected_at_iso
         doc_id = f"{normalized.get('bidNtceNo', '')}-{normalized.get('bidNtceOrd', '')}".strip("-")
         if not doc_id:
             doc_id = normalized.get("untyNtceNo") or f"auto-{idx}"
@@ -238,6 +257,7 @@ def collect_and_upsert(
         "total_collected": 0,
         "filtered_records": 0,
         "upserted_records": 0,
+        "collected_at": None,
         "meta_updated": False,
     }
 
@@ -304,15 +324,22 @@ def collect_and_upsert(
     if not filtered_records:
         return summary
 
-    upserted = upsert_firestore(filtered_records, db=db, verbose=verbose)
+    collected_at = now_kst()
+    upserted = upsert_firestore(
+        filtered_records,
+        db=db,
+        verbose=verbose,
+        collected_at=collected_at,
+    )
     summary["upserted_records"] = upserted
+    summary["collected_at"] = collected_at
 
     if upserted > 0:
         meta_ref = db.collection(FIREBASE_META_COLLECTION).document(FIREBASE_META_DOC)
         meta_ref.set(
             {
-                "collectedDate": summary["end_dt"].date().isoformat(),
-                "collectedAt": datetime.now().isoformat(),
+                "collectedDate": collected_at.date().isoformat(),
+                "collectedAt": collected_at.isoformat(),
                 "upsertedRecords": upserted,
             },
             merge=True,

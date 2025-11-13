@@ -324,11 +324,45 @@ def main():
                                 "text": f"현재 최신 데이터입니다. 마지막 업데이트 날짜: {msg_date}",
                             }
                         else:
-                            start_str = result["start_dt"].strftime("%Y-%m-%d %H:%M")
-                            end_str = result["end_dt"].strftime("%Y-%m-%d %H:%M")
+                            start_dt = result.get("start_dt")
+                            end_dt = result.get("end_dt")
+                            collected_at = result.get("collected_at")
+
+                            def _to_kst(dt: datetime | None) -> datetime | None:
+                                if not isinstance(dt, datetime):
+                                    return None
+                                if dt.tzinfo is None:
+                                    return dt.replace(tzinfo=KST)
+                                return dt.astimezone(KST)
+
+                            collected_dt = None
+                            if isinstance(collected_at, str):
+                                try:
+                                    collected_dt = datetime.fromisoformat(collected_at)
+                                except ValueError:
+                                    collected_dt = None
+                            elif isinstance(collected_at, datetime):
+                                collected_dt = collected_at
+
+                            collected_dt = _to_kst(collected_dt) or now_kst()
+                            collected_str = collected_dt.strftime("%Y-%m-%d %H:%M")
+
+                            start_str = ""
+                            end_str = ""
+                            start_dt_kst = _to_kst(start_dt)
+                            end_dt_kst = _to_kst(end_dt)
+                            if start_dt_kst and end_dt_kst:
+                                start_str = start_dt_kst.strftime("%Y-%m-%d %H:%M")
+                                end_str = end_dt_kst.strftime("%Y-%m-%d %H:%M")
+
+                            range_suffix = (
+                                f" (수집 구간: {start_str} ~ {end_str})"
+                                if start_str and end_str
+                                else ""
+                            )
                             st.session_state["refresh_message"] = {
                                 "type": "success",
-                                "text": f"{start_str} ~ {end_str} 구간에서 {result['upserted_records']}건 업데이트 완료",
+                                "text": f"{collected_str} 수집 완료 - {result['upserted_records']}건 반영{range_suffix}",
                             }
                         st.cache_data.clear()
                     st.rerun()
