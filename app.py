@@ -205,38 +205,115 @@ def format_money(v):
 @st.dialog("입찰공고 상세", width="large")
 def show_detail_dialog(row: pd.Series):
     now = now_kst_naive()
+    bid_title = row.get("bidNtceNm") or "-"
+    bid_notice = row.get("bidNtceDt")
     bid_begin = row.get("bidBeginDt")
+    qlf_deadline = row.get("bidQlfctRgstDt")
     bid_close = row.get("bidClseDt")
+    deadline = qlf_deadline if pd.notna(qlf_deadline) else bid_close
 
-    st.write(f"입찰공고일시: {row.get('bidNtceDt', '-')}")
-    if pd.notna(bid_begin):
-        st.write(f"개찰일시: {bid_begin}")
-    else:
-        st.write("개찰일시: -")
+    def fmt_dt(value):
+        if pd.isna(value):
+            return "-"
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        return str(value)
 
-    if pd.notna(bid_close):
-        st.write(f"입찰마감일시: {bid_close}")
-        if bid_close > now and pd.notna(bid_begin) and bid_begin <= now:
-            remaining = bid_close - now
+    def fmt_text(value):
+        if value is None:
+            return "-"
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or "-"
+        if pd.isna(value):
+            return "-"
+        return str(value)
+
+    remaining_str = "-"
+    if pd.notna(bid_notice) and pd.notna(deadline):
+        if deadline <= now:
+            remaining_str = "마감"
+        elif bid_notice > now:
+            remaining_str = "입찰 전"
+        else:
+            remaining = deadline - now
             days = remaining.days
             hours = remaining.seconds // 3600
             minutes = (remaining.seconds % 3600) // 60
-            st.write(f"입찰 마감까지 남은시간: {days}일 {hours}시간 {minutes}분")
-    else:
-        st.write("입찰마감일시: -")
+            label = "입찰참가자격등록마감" if pd.notna(qlf_deadline) else "입찰마감"
+            remaining_str = f"{label}까지 {days}일 {hours}시간 {minutes}분 남음"
 
-    st.write(f"입찰참가자격등록마감일시: {row.get('bidQlfctRgstDt', '-')}")
+    detail_rows = [
+        ("공고기관명", fmt_text(row.get("ntceInsttNm"))),
+        ("수요기관명", fmt_text(row.get("dminsttNm"))),
+        ("입찰공고일시", fmt_dt(bid_notice)),
+        ("개찰일시", fmt_dt(bid_begin)),
+        ("입찰마감일시", fmt_dt(bid_close)),
+        ("입찰참가자격등록마감일시", fmt_dt(qlf_deadline)),
+    ]
 
     officer = row.get("ntceInsttOfclNm") or row.get("exctvNm")
-    if officer:
-        st.write(f"담당자명: {officer}")
     phone = row.get("ntceInsttOfclTelNo")
+    phone_display = "-"
     if phone:
         phone_str = str(phone)
-        if "*" in phone_str:
-            st.write("담당자 전화번호: 비공개")
-        else:
-            st.write(f"담당자 전화번호: {phone_str}")
+        phone_display = "비공개" if "*" in phone_str else phone_str
+
+    contact_rows = [
+        ("담당자명", fmt_text(officer)),
+        ("담당자 전화번호", phone_display),
+    ]
+
+    st.markdown(f"### {bid_title}")
+    def render_table(rows: list[tuple[str, str]], css_class: str) -> str:
+        df = pd.DataFrame(rows, columns=["항목", "내용"])
+        return df.to_html(
+            index=False,
+            header=False,
+            classes=css_class,
+            border=0,
+            escape=False,
+        )
+
+    table_style = """
+    <style>
+    .detail-dialog-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 0.5rem;
+        font-size: 0.95rem;
+    }
+    .detail-dialog-table td {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 0.35rem 0.6rem;
+        vertical-align: top;
+    }
+    .detail-dialog-table tr:nth-child(even) {
+        background-color: rgba(255, 255, 255, 0.03);
+    }
+    .detail-dialog-table td:first-child {
+        width: 30%;
+        font-weight: 600;
+        color: #d5d5d5;
+    }
+    .detail-dialog-table td:last-child {
+        width: 70%;
+    }
+    </style>
+    """
+
+    st.markdown(table_style, unsafe_allow_html=True)
+
+    st.markdown("#### 공고 상세")
+    st.markdown(render_table(detail_rows, "detail-dialog-table"), unsafe_allow_html=True)
+    if remaining_str not in {"-", ""}:
+        st.markdown(
+            f"<div style='text-align:right;color:#d5d5d5;margin-bottom:1.2rem;'>{remaining_str}</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("#### 기관담당자 정보")
+    st.markdown(render_table(contact_rows, "detail-dialog-table"), unsafe_allow_html=True)
 
     st.write("---")
     st.write("공고규격서 및 첨부파일")

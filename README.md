@@ -21,7 +21,7 @@
 
 ## 운영 가이드
 
-- 서비스 키 및 Firebase 자격 증명 비공개 저장, Streamlit secrets 활용 권장
+- 서비스 키 및 Firebase 자격 증명 비공개 저장, Streamlit secrets 활용
 
 ## English Summary
 
